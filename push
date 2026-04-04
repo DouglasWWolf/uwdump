@@ -1,0 +1,5 @@
+make clean
+sudo rm *.bin
+git add .
+git commit -m "No change history kept"
+git push origin main
