@@ -213,4 +213,8 @@ debug:
 
 
 
-
+install:
+	cp uwdump.x86   /utils/uwdump     
+	sudo chown root /utils/uwdump
+	sudo chgrp root /utils/uwdump
+	sudo chmod 4777 /utils/uwdump

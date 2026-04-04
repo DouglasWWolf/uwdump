@@ -18,6 +18,8 @@
 #include <cassert>
 #include <vector>
 #include "PhysMem.h"
+#include "structs.h"
+#include "uw_engine.h"
 using std::string;
 using std::vector;
 
@@ -41,70 +43,30 @@ struct t_opt
 } opt;
 
 FILE* ifile;
+UWEngine uw_engine(ifile);
 
+uint16_t current_flags;
+dacs_t   current_dac;
 
-//=============================================================================
-// This is a binary userwave-command, with all fields in little-endian.
-//=============================================================================
-#pragma pack(push, 1)
-struct uw_cmd_t
+uw_state_t eof_state;
+
+const char* bit_name[] = 
 {
-    uint32_t    cmd_index;
-    uint16_t    cmd_duration;
-
-    uint8_t     read_en                 : 1;
-    uint8_t     read_phase              : 1;
-    uint8_t     read_bright_flag        : 1;
-    uint8_t     read_safe_halting_point : 1;
-    uint8_t     read_generated_flag     : 1;
-    uint16_t    read_flags_reserved     : 11;
-
-    uint16_t    read_start_time;
-    uint16_t    read_characterization_id;
-    uint16_t    read_data_type;
-    uint16_t    reserved0;
-    uint32_t    reserved1;
-    
-    uint16_t    vpretop_a;
-    uint16_t    vpretop_b;
-    uint16_t    vpretop_sw_delay;
-    
-    uint16_t    vprebot_a;
-    uint16_t    vprebot_b;
-    uint16_t    vprebot_sw_delay;
-
-    uint16_t    refp_a;
-    uint16_t    refp_b;
-    uint16_t    refp_sw_delay;
-
-    uint16_t    refn_a;
-    uint16_t    refn_b;
-    uint16_t    refn_sw_delay;
-
-    uint16_t    liq_a;
-    uint16_t    liq_b;
-    uint16_t    liq_sw_delay;
-
-    uint8_t     vpretop_sw      : 1;
-    uint8_t     vprebot_sw      : 1;
-    uint8_t     refp_sw         : 1;
-    uint8_t     refn_sw         : 1;
-    uint8_t     liq_sw          : 1;
-    uint16_t    switch_reserved : 11;
-
-    uint16_t    roll_pre_top_duration;
-    uint16_t    roll_pre_top_start;
-
-    uint16_t    roll_pre_bot_duration;
-    uint16_t    roll_pre_bot_start;
-
-    uint16_t    glb_pre_duration;
-    uint16_t    glb_pre_start;
+    "eof",
+    "liq_sw",
+    "vpretop_sw", "vprebot_sw",
+    "refp_sw", "refn_sw",
+    "glb_pre_sw",
+    "rs0", "rs256",
+    "pre0", "pre256"
 };
-#pragma pack(pop)
-//=============================================================================
 
 
+const char* dac_name[] =
+{
+    "vpretop_a", "vpretop_b", "liq_a",     "liq_b",  nullptr,  nullptr, nullptr,  nullptr,
+    nullptr,     "vprebot_a", "vprebot_b", "refp_a", "refp_b", nullptr, "refn_a", "refn_b"
+};
 
 
 //=============================================================================
@@ -112,7 +74,6 @@ struct uw_cmd_t
 //=============================================================================
 void execute(int argc, const char** argv);
 //=============================================================================
-
 
 //=============================================================================
 // main() - We just call execute and catch the exceptions
@@ -269,73 +230,6 @@ void parse_command_line(const char** argv)
 //=================================================================================================
 
 
-#pragma pack(push, 1)
-
-const char* bit_name[] = 
-{
-    "eof",
-    "liq_sw",
-    "vpretop_sw", "vprebot_sw",
-    "refp_sw", "refn_sw",
-    "glb_pre_sw",
-    "rs0", "rs256",
-    "pre0", "pre256"
-};
-
-// Masks for each bit in uw_flags_t
-const int MASK_EOF        = 0x0001;
-const int MASK_LIQ_SW     = 0x0002;
-const int MASK_VPRETOP_SW = 0x0004;
-const int MASK_VPREBOT_SW = 0x0008;
-const int MASK_REFP_SW    = 0x0010;
-const int MASK_REFN_SW    = 0x0020;
-const int MASK_GLB_PRE_SW = 0x0040;
-const int MASK_RS0        = 0x0080;
-const int MASK_RS256      = 0x0100;
-const int MASK_PRE0       = 0x0200;
-const int MASK_PRE256     = 0x0400;
-
-
-struct dacs_t
-{
-    uint16_t    vpretop_a;
-    uint16_t    vpretop_b;
-    uint16_t    liq_a;
-    uint16_t    liq_b;
-    uint16_t    na0;
-    uint16_t    na1;
-    uint16_t    na2;
-    uint16_t    na3;        
-
-    uint16_t    na4;
-    uint16_t    vprebot_a;
-    uint16_t    vprebot_b;
-    uint16_t    refp_a;
-    uint16_t    refp_b;
-    uint16_t    na5;
-    uint16_t    refn_a;
-    uint16_t    refn_b;
-};
-
-const char* dac_name[] =
-{
-    "vpretop_a", "vpretop_b", "liq_a",     "liq_b",  nullptr,  nullptr, nullptr,  nullptr,
-    nullptr,     "vprebot_a", "vprebot_b", "refp_a", "refp_b", nullptr, "refn_a", "refn_b"
-};
-
-struct uw_state_t
-{
-    uint32_t    timestamp;
-    uint16_t    tick_count;
-    dacs_t      dac;
-    uint16_t    flags;
-    uint8_t     filler[24];
-};
-#pragma pack(pop)
-
-typedef vector<uw_state_t> uwc_t;
-uint16_t current_flags;
-dacs_t   current_dac;
 
 
 //=================================================================================================
@@ -343,9 +237,7 @@ dacs_t   current_dac;
 //=================================================================================================
 uw_state_t get_tick(uint64_t index)
 {
-    uw_state_t state, err_state;
- 
-    memset(&err_state, 0xFF, sizeof err_state);
+    uw_state_t state;
 
     // If we're dumping the output state of a userwave, we should never
     // get here
@@ -355,14 +247,14 @@ uw_state_t get_tick(uint64_t index)
     if (opt.task == TASK_DUMP_FROM_FILE)
     {
         if (fseek(ifile, index * 64, SEEK_SET) != 0)
-            return err_state;
+            return eof_state;
         if (fread(&state, 1, sizeof state, ifile) != sizeof state)
-            return err_state;
+            return eof_state;
         return state;
     }
 
     // One megabyte
-    const  uint64_t window_size = 0x100000;
+    const  uint64_t window_size  = 0x100000;
     static uint64_t window_start = 0;
     static uint64_t window_end   = 0;
     static uint8_t* window;
@@ -422,6 +314,13 @@ bool get_uwc(uint64_t starting_index, uwc_t& v)
 
     // Clear the result vector
     v.clear();
+
+    // If we're playing back from a userwave binary, let the
+    // engine take care of fetching the UWC
+    if (opt.task == TASK_DUMP_FROM_UW)
+    {
+        return uw_engine.get_next_uwc(v);
+    }
     
     while (true)
     {
@@ -653,6 +552,7 @@ void sanity_check()
     }
 
     // If we have an input file open, rewind it
+    if (opt.task == TASK_DUMP_FROM_UW) uw_engine.init();
     if (ifile) fseek(ifile, 0, SEEK_SET);
 }
 //=================================================================================================
@@ -688,9 +588,9 @@ void save_ram_buffer(string filename)
 
 
 //=================================================================================================
-// dump_from_ram_or_file() - Display the userwave recording, as read from RAM or a recording file
+// dump_userwave_recording() - Parses the userwave recording and prints human-readable output
 //=================================================================================================
-void dump_from_ram_or_file()
+void dump_userwave_recording()
 {
     uint64_t current_index = 0;    
     uwc_t uwc;
@@ -725,6 +625,10 @@ void open_input_file(string filename)
 //=================================================================================================
 void execute(int argc, const char** argv)
 {
+
+    // Create state record to serve an an EOF
+    memset(&eof_state, 0xFF, sizeof eof_state);
+
     // Parse the command line options
     parse_command_line(argv);
 
@@ -735,17 +639,17 @@ void execute(int argc, const char** argv)
             break;
 
         case TASK_DUMP_FROM_RAM:
-            dump_from_ram_or_file();
+            dump_userwave_recording();
             break;
         
         case TASK_DUMP_FROM_FILE:
             open_input_file(opt.filename);
-            dump_from_ram_or_file();
+            dump_userwave_recording();
             break;
         
         case TASK_DUMP_FROM_UW:
             open_input_file(opt.filename);
-            printf("dump from uw\n");
+            dump_userwave_recording();
             break;
 
         default:
