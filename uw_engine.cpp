@@ -1,4 +1,5 @@
 #include "uw_engine.h"
+#include <cstdlib>
 #include <cstring>
 
 static uw_state_t eof_state, blank_state;
@@ -6,33 +7,41 @@ static uw_state_t eof_state, blank_state;
 void UWEngine::init()
 {
     timestamp_ = 0;
-    fseek(ifile_, 0, SEEK_SET);
+    rewind(ifile_);
     memset(&eof_state, 0xFF, sizeof eof_state);
     memset(&blank_state, 0, sizeof blank_state);
+    dac_switches_ = 0;
 }
 
 //=============================================================================
 // set_flag() - Turns on one of the bits in the flags field for one or 
-//                more ticks of the UWC
+//              more ticks of the UWC
 //=============================================================================
-static void set_flag(uwc_t& uwc, uint16_t mask, int start, int duration)
+static void set_flag(uwc_t& uwc, uint16_t mask, int on_off, uint16_t start, int duration)
 {
     // Safety check
     if (uwc.empty()) return;
-        
+
+    // A duration of 0 means "don't set the flag"
+    if (duration == 0) return;
+    
     // What's the last index in the UWC?
-    uint16_t last_index = uwc.size() - 1;
+    int last_index = uwc.size() - 1;
 
     // Loop through each state that we care about
     for (int i=0; i<duration; ++i)
     {
         // What index are we about to update?
-        uint16_t index = start + i;        
+        int index = start + i;        
 
         // Have we fallen off the end of the UWC?
         if (index > last_index) break;
 
-        uwc[index].flags |= mask;
+        // Set the flag or clear the flag
+        if (on_off)
+            uwc[index].flags |= mask;
+        else
+            uwc[index].flags &= ~mask;
     }
 
 }
@@ -52,16 +61,22 @@ bool UWEngine::get_next_uwc(uwc_t& uwc)
     // Start with an empty UWC
     uwc.clear();
 
-    // If there are no more userwave commands, hand the caller an EOF
-    if (fread(&cmd, 1, sizeof cmd, ifile_) != sizeof cmd)
+    // Fetch userwave commands until we get one that has a non-zero duration
+    do
     {
-        for (i=0; i<4; ++i) uwc.push_back(eof_state);
-        return false;
-    }
+        // If there are no more userwave commands, hand the caller an EOF
+        if (fread(&cmd, 1, sizeof cmd, ifile_) != sizeof cmd)
+        {
+            for (i=0; i<4; ++i) uwc.push_back(eof_state);
+            return false;
+        }
+
+    } while (cmd.cmd_duration == 0);
 
     // Create a UWC with the timestamp, tick_count, and DAC values all filled in
     uint16_t tick = 0;
     memset(&state, 0, sizeof state);
+    state.flags         = dac_switches_;
     state.dac.vpretop_a = cmd.vpretop_a;
     state.dac.vpretop_b = cmd.vpretop_b;
     state.dac.vprebot_a = cmd.vprebot_a;
@@ -83,20 +98,26 @@ bool UWEngine::get_next_uwc(uwc_t& uwc)
     if (cmd.read_en)
     {
         if (cmd.read_phase == 0)
-            set_flag(uwc, MASK_RS0,   cmd.read_start_time, 1);
+            set_flag(uwc, MASK_RS0,   1, cmd.read_start_time, 1);
         else
-            set_flag(uwc, MASK_RS256, cmd.read_start_time, 1);
+            set_flag(uwc, MASK_RS256, 1, cmd.read_start_time, 1);
     }
 
-    // Turn on the switches at the appropriate time ticks
-    set_flag(uwc, MASK_VPRETOP_SW, cmd.vpretop_sw_delay,   cmd.cmd_duration);
-    set_flag(uwc, MASK_VPREBOT_SW, cmd.vprebot_sw_delay,   cmd.cmd_duration);
-    set_flag(uwc, MASK_REFP_SW,    cmd.refp_sw_delay,      cmd.cmd_duration);
-    set_flag(uwc, MASK_REFN_SW,    cmd.refn_sw_delay,      cmd.cmd_duration);
-    set_flag(uwc, MASK_LIQ_SW,     cmd.liq_sw_delay,       cmd.cmd_duration);
-    set_flag(uwc, MASK_GLB_PRE_SW, cmd.glb_pre_start,      cmd.glb_pre_duration);
-    set_flag(uwc, MASK_PRE0,       cmd.roll_pre_top_start, cmd.roll_pre_top_duration);
-    set_flag(uwc, MASK_PRE256,     cmd.roll_pre_bot_start, cmd.roll_pre_bot_duration);
+    // Turn switches on or off at the appropriate time ticks
+    set_flag(uwc, MASK_VPRETOP_SW, cmd.vpretop_sw,  cmd.vpretop_sw_delay,   100000);
+    set_flag(uwc, MASK_VPREBOT_SW, cmd.vprebot_sw,  cmd.vprebot_sw_delay,   100000);
+    set_flag(uwc, MASK_REFP_SW,    cmd.refp_sw,     cmd.refp_sw_delay   ,   100000);
+    set_flag(uwc, MASK_REFN_SW,    cmd.refn_sw,     cmd.refn_sw_delay   ,   100000);
+    set_flag(uwc, MASK_LIQ_SW,     cmd.liq_sw,      cmd.liq_sw_delay    ,   100000);
+    set_flag(uwc, MASK_GLB_PRE_SW, 1,               cmd.glb_pre_start,      cmd.glb_pre_duration);
+    set_flag(uwc, MASK_PRE0,       1,               cmd.roll_pre_top_start, cmd.roll_pre_top_duration);
+    set_flag(uwc, MASK_PRE256,     1,               cmd.roll_pre_bot_start, cmd.roll_pre_bot_duration);
+
+    // Get a handy reference to the last state in the UWC
+    auto& last_state = uwc[uwc.size()-1];
+
+    // Save the state of the DAC switches so we can construct the next UWC
+    dac_switches_ = last_state.flags & MASK_DAC_SWITCHES;
 
     // Tell the caller that we're handing them a valid UWC
     return true;

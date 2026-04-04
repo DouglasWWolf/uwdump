@@ -13,4 +13,5 @@ protected:
 
     FILE*&      ifile_;
     uint64_t    timestamp_;
+    int16_t     dac_switches_;
 };

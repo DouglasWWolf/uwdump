@@ -49,6 +49,7 @@ uint16_t current_flags;
 dacs_t   current_dac;
 
 uw_state_t eof_state;
+uint32_t next_index;
 
 const char* bit_name[] = 
 {
@@ -305,12 +306,12 @@ uwc_t get_first_four_ticks()
 
 
 //=================================================================================================
-// get_uwc() - Fetches an entire userwave command
+// get_next_uwc() - Fetches an entire userwave command
 //=================================================================================================
-bool get_uwc(uint64_t starting_index, uwc_t& v)
+bool get_next_uwc(uwc_t& v)
 {
     // Keep track of which index we're on
-    uint64_t index = starting_index;
+    static uint64_t index = 0;
 
     // Clear the result vector
     v.clear();
@@ -327,11 +328,14 @@ bool get_uwc(uint64_t starting_index, uwc_t& v)
         // Fetch this tick
         auto state = get_tick(index);
     
-        // If we're at the end of the state-list, tell the caller
+        // If we're at the end of the state-list, this is either the end
+        // of our recorded data, or it's the last UWC of recorded data
         if (state.flags & MASK_EOF)
         {
-            v.clear();
-            return false;
+            if (v.size() != 0)
+                break;
+            else
+                return false;
         }
     
         // If we've hit the start if the next userwave command, we're done
@@ -553,7 +557,7 @@ void sanity_check()
 
     // If we have an input file open, rewind it
     if (opt.task == TASK_DUMP_FROM_UW) uw_engine.init();
-    if (ifile) fseek(ifile, 0, SEEK_SET);
+    if (ifile) rewind(ifile);
 }
 //=================================================================================================
 
@@ -592,13 +596,11 @@ void save_ram_buffer(string filename)
 //=================================================================================================
 void dump_userwave_recording()
 {
-    uint64_t current_index = 0;    
     uwc_t uwc;
 
-    while (get_uwc(current_index, uwc))
+    while (get_next_uwc(uwc))
     {
         display_uwc(uwc);
-        current_index += uwc[uwc.size()-1].timestamp - uwc[0].timestamp + 1;
     }
 }
 //=================================================================================================

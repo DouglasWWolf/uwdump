@@ -77,8 +77,14 @@ const int MASK_RS256      = 0x0100;
 const int MASK_PRE0       = 0x0200;
 const int MASK_PRE256     = 0x0400;
 
+// A mask for the DAC voltage switches
+const int MASK_DAC_SWITCHES = MASK_LIQ_SW
+                            | MASK_VPRETOP_SW
+                            | MASK_VPREBOT_SW
+                            | MASK_REFP_SW
+                            | MASK_REFN_SW;
 
-struct dacs_t
+struct dacs_t           
 {
     uint16_t    vpretop_a;
     uint16_t    vpretop_b;
